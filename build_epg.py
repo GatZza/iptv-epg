@@ -118,6 +118,7 @@ ALIASES = {
         "fusemusic": "fuse",
         "hallmarkchannelwestsp": "hallmarkchannel",
         "starzkidsfamily": "starzkids",
+        "starzkidsandfamily": "starzkids",
         "starzinblack": "starzinblack",
         "moviemax": None,
         "showtime": "paramountwithshowtime",
@@ -144,14 +145,16 @@ ALIASES = {
         "cinemaxlatino": "cinemaxspanish",
         "starzencorewestern": "starzencorewesterns",
         # --- US Documentaries ---
-        "smithsonian": "smithsoniannetwork",
+        # NOTE: normalize() strips the word "Channel", so "Travel Channel"
+        # normalizes to "travel" (playlist) / "thetravel" (source, since the
+        # source id is "The Travel Channel") -- these still need an alias.
+        # Smithsonian/Discovery Life/Discovery Family/FYI all normalize to
+        # the same thing on both sides once "Channel" is stripped, so they
+        # match directly and do NOT need (and must not have) an alias entry.
+        "travel": "thetravel",
         "idinvestigationdiscovery": "investigationdiscovery",
         "natgeo": "nationalgeographic",
         "natgeowild": "nationalgeographicwild",
-        "travelchannel": "thetravelchannel",
-        "discoverylife": "discoverylifechannel",
-        "fyi": "fyichannel",
-        "discoveryfamily": "discoveryfamilychannel",
         "lawandcrimenetwork": "lawandcrime",
         "hgtv": None,
         "ae": None,
@@ -160,9 +163,11 @@ ALIASES = {
     },
     "UK1": {
         # --- UK Sports ---
+        # NOTE: source is "Premier.Sports.1/2.HD.uk" (plural "Sports"), which
+        # normalizes to the same "premiersports1/2" as the playlist entries
+        # -- these match directly and must NOT be aliased to a "premiersport"
+        # (singular) key that doesn't exist in the source.
         "skysportsracing": "skyspracing",
-        "premiersports1": "premiersport1",
-        "premiersports2": "premiersport2",
         "skysportsmainevent": None,
         "skysportsf1": None,
         "skysportspremierleague": None,
