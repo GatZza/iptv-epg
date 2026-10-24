@@ -51,7 +51,7 @@ import sys
 import unicodedata
 import urllib.request
 import xml.etree.ElementTree as ET
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 # --------------------------------------------------------------------------
 # Configuration
@@ -62,6 +62,18 @@ OUTPUT_DIR = os.environ.get("OUTPUT_DIR", "public")
 USER_AGENT = "Mozilla/5.0 (compatible; personal-epg-builder/1.0)"
 
 SKIP_PREFIXES = ("CINEBOX",)  # generic genre wheels: no real schedule anywhere
+
+# How much programme data to keep in the output file. The source guide
+# carries several days in each direction; most of that is wasted weight for
+# a player that only ever displays the next day or two, and a smaller file
+# is much kinder to set-top boxes with limited local storage (TiviMate
+# builds its own on-device EPG database from this file, and on a
+# storage-constrained box a bigger feed can silently fail to write that
+# database even though the download itself "succeeds"). Keep a small grace
+# window of already-started programmes (so "now playing" still works) plus
+# several days forward.
+PAST_GRACE_HOURS = 3
+MAX_DAYS_FORWARD = int(os.environ.get("MAX_DAYS_FORWARD", "5"))
 
 # Free public XMLTV source, per epgshare01 region/category "tag".
 SOURCE_TAGS = {
@@ -291,11 +303,24 @@ def match_channel(display, source_by_norm, aliases):
 # Step 3: stream the big XML and pull only the programmes we need
 # --------------------------------------------------------------------------
 
-def extract_programmes(xml_gz_bytes, wanted_source_ids):
+def parse_xmltv_time(s):
+    """Parse an XMLTV start/stop timestamp ("20261020044800 +0000") into an
+    aware UTC datetime. Returns None if it can't be parsed, in which case
+    the caller should keep the programme rather than risk dropping
+    something good over a format quirk."""
+    if not s:
+        return None
+    try:
+        return datetime.strptime(s.split(" ")[0], "%Y%m%d%H%M%S").replace(tzinfo=timezone.utc)
+    except ValueError:
+        return None
+
+def extract_programmes(xml_gz_bytes, wanted_source_ids, window_start, window_end):
     """Stream-parse the (large) source XMLTV and return
     {source_channel_id: [<programme> Element, ...]} for only the channel ids
     we actually need, without holding the whole document in memory as a
-    parsed tree."""
+    parsed tree. Programmes outside [window_start, window_end] are dropped
+    to keep the output file small -- see MAX_DAYS_FORWARD above."""
     result = {cid: [] for cid in wanted_source_ids}
     raw = gzip.decompress(xml_gz_bytes)
     stream = io.BytesIO(raw)
@@ -304,7 +329,11 @@ def extract_programmes(xml_gz_bytes, wanted_source_ids):
         if elem.tag == "programme":
             ch = elem.get("channel")
             if ch in result:
-                result[ch].append(elem)
+                start = parse_xmltv_time(elem.get("start"))
+                if start is None or (window_start <= start <= window_end):
+                    result[ch].append(elem)
+                else:
+                    elem.clear()
             else:
                 elem.clear()
         elif elem.tag == "channel":
@@ -394,7 +423,10 @@ def main():
 
     # Fetch + stream each needed source tag's big XML exactly once, pulling
     # only the programmes for the union of source ids needed across all
-    # targets that share that tag.
+    # targets that share that tag, trimmed to a rolling window so the
+    # output stays small (see MAX_DAYS_FORWARD above).
+    window_start = datetime.now(timezone.utc) - timedelta(hours=PAST_GRACE_HOURS)
+    window_end = datetime.now(timezone.utc) + timedelta(days=MAX_DAYS_FORWARD)
     programmes_by_tag = {}
     for tag in needed_tags:
         wanted = set()
@@ -403,9 +435,9 @@ def main():
                 wanted.update(t["distinct_sources"])
         log(f"Downloading + streaming the {tag} source guide ...")
         xml_gz_bytes = fetch(SOURCE_TAGS[tag]["xml_url"], binary=True)
-        programmes_by_tag[tag] = extract_programmes(xml_gz_bytes, wanted)
+        programmes_by_tag[tag] = extract_programmes(xml_gz_bytes, wanted, window_start, window_end)
         total = sum(len(v) for v in programmes_by_tag[tag].values())
-        log(f"[{tag}] Pulled {total} programme entries.")
+        log(f"[{tag}] Pulled {total} programme entries (kept to {MAX_DAYS_FORWARD} days forward).")
 
     for t in TARGETS:
         t["total_progs"] = sum(
